@@ -45,7 +45,7 @@ jobs:
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/apex-sportz-temporary.jks"
           STORE_PASS="$(openssl rand -hex 24)"
-          KEY_PASS="$(openssl rand -hex 24)"
+          KEY_PASS="$STORE_PASS"
           keytool -genkeypair -noprompt \
             -keystore "$KEYSTORE" \
             -storepass "$STORE_PASS" \
