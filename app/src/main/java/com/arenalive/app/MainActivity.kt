@@ -79,7 +79,17 @@ fun YouTubeStyleScreen() {
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
     var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
+    var failedStreamUrls by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
+
+    fun handlePlaybackError(failedUrl: String) {
+        val updatedFailures = failedStreamUrls + failedUrl
+        failedStreamUrls = updatedFailures
+        val nextStream = selectedEvent?.streams?.firstOrNull { stream ->
+            stream.url != failedUrl && stream.url !in updatedFailures
+        }
+        if (nextStream != null) selectedStream = nextStream
+    }
 
     suspend fun refresh() {
         loading = true
@@ -91,6 +101,7 @@ fun YouTubeStyleScreen() {
                 val firstLive = feed?.events?.firstOrNull { it.isLive } ?: feed?.events?.firstOrNull()
                 if (firstLive != null && firstLive.streams.isNotEmpty()) {
                     selectedEvent = firstLive
+                    failedStreamUrls = emptySet()
                     selectedStream = preferredStream(firstLive.streams)
                 }
             }
@@ -115,7 +126,10 @@ fun YouTubeStyleScreen() {
                     .background(Color.Black)
             ) {
                 if (selectedStream != null) {
-                    ExoVideoPlayer(stream = selectedStream!!)
+                    ExoVideoPlayer(
+                        stream = selectedStream!!,
+                        onPlaybackError = ::handlePlaybackError
+                    )
                 } else {
                     Column(
                         modifier = Modifier.fillMaxSize(),
@@ -143,6 +157,7 @@ fun YouTubeStyleScreen() {
                             shape = RoundedCornerShape(8.dp),
                             color = if (isSelected) Ink else BgGray,
                             modifier = Modifier.clickable {
+                                failedStreamUrls = emptySet()
                                 selectedStream = stream
                             }
                         ) {
@@ -231,6 +246,7 @@ fun YouTubeStyleScreen() {
             items(feed?.events ?: emptyList(), key = { it.id }) { event ->
                 EventListItem(event = event, isSelected = event.id == selectedEvent?.id) {
                     selectedEvent = event
+                    failedStreamUrls = emptySet()
                     selectedStream = preferredStream(event.streams)
                 }
             }
@@ -242,7 +258,7 @@ fun YouTubeStyleScreen() {
 // FIXED EXOPLAYER WITH CLEARKEY DRM
 // ---------------------------------------------------------------------------
 @Composable
-fun ExoVideoPlayer(stream: StreamOption) {
+fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
     val context = LocalContext.current
     var playbackError by remember(stream) { mutableStateOf<String?>(null) }
     
@@ -301,6 +317,7 @@ fun ExoVideoPlayer(stream: StreamOption) {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("ExoVideoPlayer", "Playback failed for ${stream.url}", error)
                 playbackError = error.errorCodeName ?: "Unable to play this stream"
+                onPlaybackError(stream.url)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
