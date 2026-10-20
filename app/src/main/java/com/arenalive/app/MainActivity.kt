@@ -7,17 +7,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,182 +33,183 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import androidx.navigation.NavController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Theme Colors
-private val Ink = Color(0xFF151923)
-private val Muted = Color(0xFF727988)
+private val Ink = Color(0xFF0F0F0F)
+private val Muted = Color(0xFF606060)
 private val Accent = Color(0xFF2563EB)
-private val Canvas = Color(0xFFF7F8FA)
-private val Line = Color(0xFFE8EAF0)
+private val Canvas = Color(0xFFFFFFFF)
+private val BgGray = Color(0xFFF2F2F2)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.statusBarColor = android.graphics.Color.WHITE
+        window.navigationBarColor = android.graphics.Color.WHITE
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
         }
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Accent, background = Canvas, surface = Color.White)) {
-                val navController = rememberNavController()
-                NavHost(navController = navController, startDestination = "home") {
-                    composable("home") { HomeScreen(navController) }
-                    composable("detail") { DetailScreen(navController) }
-                    composable("player") { PlayerScreen(navController) }
-                }
+            MaterialTheme(colorScheme = lightColorScheme(primary = Accent, background = Canvas)) {
+                YouTubeStyleScreen()
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// PAGE 1: HOME SCREEN
-// ---------------------------------------------------------------------------
 @Composable
-fun HomeScreen(navController: NavController) {
+fun YouTubeStyleScreen() {
     var feed by remember { mutableStateOf<Feed?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var selectedCategory by remember { mutableStateOf("All sports") }
+    var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
+    var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
         loading = true
-        error = null
         try {
             feed = SportsApi.fetch()
+            // Auto-play first live event if nothing is selected
+            if (selectedEvent == null) {
+                val firstLive = feed?.events?.firstOrNull { it.isLive } ?: feed?.events?.firstOrNull()
+                if (firstLive != null && firstLive.streams.isNotEmpty()) {
+                    selectedEvent = firstLive
+                    selectedStream = firstLive.streams.first()
+                }
+            }
         } catch (e: Exception) {
-            error = "Couldn’t load the schedule. Check your connection."
+            // Handle error
         } finally {
             loading = false
         }
     }
 
     LaunchedEffect(Unit) { refresh() }
-    
-    val currentFeed = feed
-    val categories = listOf("All sports") + (currentFeed?.events.orEmpty().map { it.category }.filter { it.isNotBlank() }.distinct().sorted())
-    val visibleEvents = currentFeed?.events.orEmpty().filter {
-        selectedCategory == "All sports" || it.category.equals(selectedCategory, ignoreCase = true)
-    }
 
-    Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding()) {
-        // Top Bar
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                Text("APEX SPORTZ", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.2.sp)
-                Text("Live sports, at a glance.", color = Muted, fontSize = 13.sp)
-            }
-            IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Ink)
-            }
-        }
-
-        // Filters
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            categories.take(4).forEach { category ->
-                val active = selectedCategory == category
-                Surface(
-                    modifier = Modifier.clickable { selectedCategory = category },
-                    shape = RoundedCornerShape(18.dp),
-                    color = if (active) Ink else Color.White,
-                ) {
-                    Text(
-                        category,
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                        color = if (active) Color.White else Muted,
-                        fontSize = 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        
-        // List of Events
-        when {
-            loading && currentFeed == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
-            error != null && currentFeed == null -> EmptyState(error!!, "Tap refresh to try again.")
-            visibleEvents.isEmpty() -> EmptyState("No events found.", "Try another sport or refresh.")
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(11.dp),
-                ) {
-                    items(visibleEvents, key = { it.id }) { event ->
-                        EventCard(event = event, onWatch = {
-                            EventHolder.currentEvent = event
-                            navController.navigate("detail")
-                        })
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PAGE 2: EVENT DETAILS SCREEN
-// ---------------------------------------------------------------------------
-@Composable
-fun DetailScreen(navController: NavController) {
-    val event = EventHolder.currentEvent
-    if (event == null) {
-        navController.popBackStack()
-        return
-    }
-
-    Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { navController.popBackStack() }) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-            }
-            Text("Event Details", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
-        }
-
-        Column(Modifier.padding(20.dp)) {
-            Text(event.name, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Spacer(Modifier.height(8.dp))
-            Text("${event.home} vs ${event.away}", fontSize = 18.sp, color = Muted)
-            Spacer(Modifier.height(24.dp))
-            
-            Text("Available Streams", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Spacer(Modifier.height(12.dp))
-
-            if (event.streams.isEmpty()) {
-                Text("No streams available for this event.", color = Muted)
-            } else {
-                event.streams.forEach { stream ->
-                    Button(
-                        onClick = {
-                            EventHolder.currentEvent = event.copy(streams = listOf(stream)) // Pass selected stream
-                            navController.navigate("player")
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(Canvas).systemBarsPadding()
+    ) {
+        // 1. VIDEO PLAYER (Top)
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .background(Color.Black)
+            ) {
+                if (selectedStream != null) {
+                    ExoVideoPlayer(stream = selectedStream!!)
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(stream.title, color = Color.White)
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                        Text("Select an event to watch", color = Color.Gray)
                     }
+                }
+            }
+        }
+
+        // 2. STREAM SELECTOR
+        if (selectedEvent != null) {
+            item {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(selectedEvent!!.streams) { stream ->
+                        val isSelected = stream.url == selectedStream?.url
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) Ink else BgGray,
+                            modifier = Modifier.clickable {
+                                selectedStream = stream
+                            }
+                        ) {
+                            Text(
+                                stream.title,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                color = if (isSelected) Color.White else Ink,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. EVENT DETAILS
+        if (selectedEvent != null) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(
+                        selectedEvent!!.title,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedEvent!!.isLive) {
+                            Box(modifier = Modifier.size(8.dp).background(Color.Red, CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("LIVE", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Text("UPCOMING", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(formatStart(selectedEvent!!.startTime), color = Muted, fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Teams
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(selectedEvent!!.teamA, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        Text(" vs ", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                        Text(selectedEvent!!.teamB, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    }
+                }
+                Divider(color = BgGray, thickness = 8.dp)
+            }
+        }
+
+        // 4. SCHEDULE (Bottom List)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Upcoming & Live", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+                IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Ink)
+                }
+            }
+        }
+
+        if (loading) {
+            item { Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) } }
+        } else {
+            items(feed?.events ?: emptyList(), key = { it.id }) { event ->
+                EventListItem(event = event, isSelected = event.id == selectedEvent?.id) {
+                    selectedEvent = event
+                    selectedStream = event.streams.firstOrNull()
                 }
             }
         }
@@ -213,125 +217,125 @@ fun DetailScreen(navController: NavController) {
 }
 
 // ---------------------------------------------------------------------------
-// PAGE 3: PLAYER SCREEN (WITH HEADERS & DRM)
+// CUSTOM EXOPLAYER WITH CLEARKEY DRM (FIXES BLACK SCREEN)
 // ---------------------------------------------------------------------------
 @Composable
-fun PlayerScreen(navController: NavController) {
-    val stream = EventHolder.currentEvent?.streams?.firstOrNull()
-    if (stream == null) {
-        navController.popBackStack()
-        return
-    }
-
+fun ExoVideoPlayer(stream: StreamOption) {
     val context = LocalContext.current
-    val exoPlayer = remember(stream.url) {
-        // 1. Setup Custom Headers for media segments
+    
+    val exoPlayer = remember(stream) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(stream.headers)
 
-        // 2. Setup Media Item
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
-        // 3. Setup DRM (If keys or license URL exist in the API)
-        if (stream.licenseUrl != null) {
-            val drmConfig = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
-                .setLicenseUri(stream.licenseUrl)
-                // FIX: Use setLicenseRequestHeaders instead of setKeyRequestProperties
-                .setLicenseRequestHeaders(stream.headers) 
-                .build()
-            mediaItemBuilder.setDrmConfiguration(drmConfig)
-        } else if (stream.drmKeys.isNotEmpty()) {
-            // If you use ClearKey (custom DRM keys)
-            val keySetId = stream.drmKeys.entries.joinToString("&") { "${it.key}=${it.value}" }
-            val drmConfig = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                .setKeySetId(keySetId.toByteArray())
-                .build()
-            mediaItemBuilder.setDrmConfiguration(drmConfig)
+        val playerBuilder = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+
+        // FIX: Apply ClearKey DRM if the API provided a KID:KEY string
+        if (!stream.drmKey.isNullOrBlank()) {
+            try {
+                val (kid, key) = stream.drmKey.split(":")
+                // Build the JSON format ExoPlayer expects for ClearKey
+                val jsonKey = """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""
+                
+                val drmCallback = LocalMediaDrmCallback(jsonKey.toByteArray())
+                val drmSessionManager = DefaultDrmSessionManager.Builder()
+                    .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                    .build(drmCallback)
+                
+                playerBuilder.setDrmSessionManager(drmSessionManager)
+                mediaItemBuilder.setDrmConfiguration(
+                    MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build()
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
-        // 4. Build ExoPlayer
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .apply {
-                setMediaItem(mediaItemBuilder.build())
-                prepare()
-                playWhenReady = true
-            }
+        playerBuilder.build().apply {
+            setMediaItem(mediaItemBuilder.build())
+            prepare()
+            playWhenReady = true
+        }
     }
 
     DisposableEffect(exoPlayer) {
         onDispose { exoPlayer.release() }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = true
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-        IconButton(
-            onClick = { navController.popBackStack() },
-            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                player = exoPlayer
+                useController = true
+                setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+            }
+        },
+        update = { it.player = exoPlayer },
+        modifier = Modifier.fillMaxSize()
+    )
+}
+
+// ---------------------------------------------------------------------------
+// UI COMPONENTS
+// ---------------------------------------------------------------------------
+@Composable
+private fun EventListItem(event: SportsEvent, isSelected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .background(if (isSelected) BgGray else Canvas)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Thumbnail / Play Icon
+        Box(
+            modifier = Modifier
+                .size(120.dp, 68.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFFE0E0E0)),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+            Text(event.category.take(3).uppercase(), fontWeight = FontWeight.Bold, color = Muted)
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SHARED COMPONENTS
-// ---------------------------------------------------------------------------
-@Composable
-private fun EventCard(event: SportsEvent, onWatch: () -> Unit) {
-    Surface(shape = RoundedCornerShape(17.dp), color = Color.White, shadowElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(15.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(event.category.uppercase(Locale.getDefault()), color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (event.isLive) Box(Modifier.size(7.dp).background(Color(0xFFE34242), CircleShape))
-                    Text(event.status.ifBlank { "Scheduled" }, color = if (event.isLive) Color(0xFFC83232) else Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        
+        Spacer(modifier = Modifier.width(12.dp))
+        
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                event.title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("${event.teamA} vs ${event.teamB}", fontSize = 12.sp, color = Muted, maxLines = 1)
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (event.isLive) {
+                    Box(modifier = Modifier.size(6.dp).background(Color.Red, CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("LIVE", color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("UPCOMING", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(event.name, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(event.home.ifBlank { "—" }, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("vs", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp))
-                Text(event.away.ifBlank { "—" }, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.height(12.dp))
-            Divider(color = Line)
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(formatStart(event.startTime), color = Muted, fontSize = 11.sp)
-                TextButton(onClick = onWatch) {
-                    Text("WATCH · ${event.streams.size}", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(formatStart(event.startTime), fontSize = 10.sp, color = Muted)
             }
         }
-    }
-}
-
-@Composable
-private fun EmptyState(title: String, subtitle: String) {
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text(title, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        Text(subtitle, color = Muted, fontSize = 13.sp)
     }
 }
 
 private fun formatStart(raw: String): String {
-    if (raw.isBlank()) return "TBA"
+    if (raw.isBlank()) return ""
     return try {
         val input = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US).parse(raw) ?: return raw
-        SimpleDateFormat("EEE, d MMM · h:mm a", Locale.getDefault()).format(Date(input.time))
+        SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(input.time))
     } catch (_: Exception) {
         raw
     }
