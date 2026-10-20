@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,6 +33,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -79,7 +79,7 @@ fun YouTubeStyleScreen() {
         loading = true
         try {
             feed = SportsApi.fetch()
-            // Auto-play first live event if nothing is selected
+            // Auto-play first live event if nothing is selected yet
             if (selectedEvent == null) {
                 val firstLive = feed?.events?.firstOrNull { it.isLive } ?: feed?.events?.firstOrNull()
                 if (firstLive != null && firstLive.streams.isNotEmpty()) {
@@ -99,7 +99,7 @@ fun YouTubeStyleScreen() {
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(Canvas).systemBarsPadding()
     ) {
-        // 1. VIDEO PLAYER (Top)
+        // 1. VIDEO PLAYER
         item {
             Box(
                 modifier = Modifier
@@ -189,7 +189,7 @@ fun YouTubeStyleScreen() {
             }
         }
 
-        // 4. SCHEDULE (Bottom List)
+        // 4. SCHEDULE HEADER
         item {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -203,7 +203,8 @@ fun YouTubeStyleScreen() {
             }
         }
 
-        if (loading) {
+        // 5. SCHEDULE LIST
+        if (loading && feed == null) {
             item { Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) } }
         } else {
             items(feed?.events ?: emptyList(), key = { it.id }) { event ->
@@ -217,34 +218,33 @@ fun YouTubeStyleScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// CUSTOM EXOPLAYER WITH CLEARKEY DRM (FIXES BLACK SCREEN)
+// FIXED EXOPLAYER WITH CLEARKEY DRM
 // ---------------------------------------------------------------------------
 @Composable
 fun ExoVideoPlayer(stream: StreamOption) {
     val context = LocalContext.current
     
     val exoPlayer = remember(stream) {
+        // 1. Setup custom headers
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(stream.headers)
 
+        // 2. Prepare the media item
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
-        val playerBuilder = ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-
-        // FIX: Apply ClearKey DRM if the API provided a KID:KEY string
+        // 3. Build the DRM Session Manager (if ClearKey key is present)
+        var drmSessionManager: DefaultDrmSessionManager? = null
         if (!stream.drmKey.isNullOrBlank()) {
             try {
                 val (kid, key) = stream.drmKey.split(":")
-                // Build the JSON format ExoPlayer expects for ClearKey
                 val jsonKey = """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""
-                
                 val drmCallback = LocalMediaDrmCallback(jsonKey.toByteArray())
-                val drmSessionManager = DefaultDrmSessionManager.Builder()
+
+                drmSessionManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     .build(drmCallback)
-                
-                playerBuilder.setDrmSessionManager(drmSessionManager)
+
+                // Tell the media item it is protected by ClearKey
                 mediaItemBuilder.setDrmConfiguration(
                     MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build()
                 )
@@ -253,11 +253,25 @@ fun ExoVideoPlayer(stream: StreamOption) {
             }
         }
 
-        playerBuilder.build().apply {
-            setMediaItem(mediaItemBuilder.build())
-            prepare()
-            playWhenReady = true
+        // 4. Create the MediaSource.Factory
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        
+        // FIX: Attach DRM Provider to the MediaSource.Factory
+        if (drmSessionManager != null) {
+            mediaSourceFactory.setDrmSessionManagerProvider(
+                DrmSessionManagerProvider { drmSessionManager }
+            )
         }
+
+        // 5. Build the player
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+            .apply {
+                setMediaItem(mediaItemBuilder.build())
+                prepare()
+                playWhenReady = true
+            }
     }
 
     DisposableEffect(exoPlayer) {
@@ -290,7 +304,7 @@ private fun EventListItem(event: SportsEvent, isSelected: Boolean, onClick: () -
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Thumbnail / Play Icon
+        // Thumbnail / Placeholder
         Box(
             modifier = Modifier
                 .size(120.dp, 68.dp)
