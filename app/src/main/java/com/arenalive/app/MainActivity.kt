@@ -1,6 +1,7 @@
 package com.arenalive.app
 
 import android.os.Bundle
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,15 +73,17 @@ class MainActivity : ComponentActivity() {
 fun YouTubeStyleScreen() {
     var feed by remember { mutableStateOf<Feed?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
     var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
     var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
         loading = true
+        errorMsg = null
         try {
             feed = SportsApi.fetch()
-            // Auto-play first live event if nothing is selected yet
+            // Auto-play first live event
             if (selectedEvent == null) {
                 val firstLive = feed?.events?.firstOrNull { it.isLive } ?: feed?.events?.firstOrNull()
                 if (firstLive != null && firstLive.streams.isNotEmpty()) {
@@ -88,7 +92,7 @@ fun YouTubeStyleScreen() {
                 }
             }
         } catch (e: Exception) {
-            // Handle error
+            errorMsg = e.message ?: "Failed to connect to the server."
         } finally {
             loading = false
         }
@@ -178,7 +182,6 @@ fun YouTubeStyleScreen() {
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Teams
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(selectedEvent!!.teamA, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                         Text(" vs ", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
@@ -203,9 +206,24 @@ fun YouTubeStyleScreen() {
             }
         }
 
-        // 5. SCHEDULE LIST
+        // 5. SCHEDULE LIST & ERROR STATE
         if (loading && feed == null) {
-            item { Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) } }
+            item { Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) } }
+        } else if (errorMsg != null && feed == null) {
+            item {
+                Column(
+                    Modifier.fillMaxWidth().padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Failed to load streams", fontWeight = FontWeight.Bold, color = Color.Red)
+                    Spacer(Modifier.height(8.dp))
+                    Text(errorMsg!!, color = Muted, textAlign = TextAlign.Center, fontSize = 12.sp)
+                    Spacer(Modifier.height(16.dp))
+                    Button(onClick = { scope.launch { refresh() } }) {
+                        Text("Retry")
+                    }
+                }
+            }
         } else {
             items(feed?.events ?: emptyList(), key = { it.id }) { event ->
                 EventListItem(event = event, isSelected = event.id == selectedEvent?.id) {
@@ -225,26 +243,28 @@ fun ExoVideoPlayer(stream: StreamOption) {
     val context = LocalContext.current
     
     val exoPlayer = remember(stream) {
-        // 1. Setup custom headers
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(stream.headers)
 
-        // 2. Prepare the media item
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
-        // 3. Build the DRM Session Manager (if ClearKey key is present)
         var drmSessionManager: DefaultDrmSessionManager? = null
         if (!stream.drmKey.isNullOrBlank()) {
             try {
-                val (kid, key) = stream.drmKey.split(":")
-                val jsonKey = """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""
+                // API gives Hex, ExoPlayer needs Base64URL
+                val (kidHex, keyHex) = stream.drmKey.split(":")
+                val kidBase64 = hexToBase64Url(kidHex)
+                val keyBase64 = hexToBase64Url(keyHex)
+                
+                // Build the JSON format ExoPlayer expects for ClearKey
+                val jsonKey = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$kidBase64"}],"type":"temporary"}"""
+                
                 val drmCallback = LocalMediaDrmCallback(jsonKey.toByteArray())
 
                 drmSessionManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     .build(drmCallback)
 
-                // Tell the media item it is protected by ClearKey
                 mediaItemBuilder.setDrmConfiguration(
                     MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build()
                 )
@@ -253,17 +273,14 @@ fun ExoVideoPlayer(stream: StreamOption) {
             }
         }
 
-        // 4. Create the MediaSource.Factory
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         
-        // FIX: Attach DRM Provider to the MediaSource.Factory
         if (drmSessionManager != null) {
             mediaSourceFactory.setDrmSessionManagerProvider(
                 DrmSessionManagerProvider { drmSessionManager }
             )
         }
 
-        // 5. Build the player
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
@@ -292,8 +309,16 @@ fun ExoVideoPlayer(stream: StreamOption) {
 }
 
 // ---------------------------------------------------------------------------
-// UI COMPONENTS
+// UTILS & UI COMPONENTS
 // ---------------------------------------------------------------------------
+private fun hexToBase64Url(hex: String): String {
+    val bytes = ByteArray(hex.length / 2)
+    for (i in bytes.indices) {
+        bytes[i] = ((Character.digit(hex[i * 2], 16) shl 4) + Character.digit(hex[i * 2 + 1], 16)).toByte()
+    }
+    return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+}
+
 @Composable
 private fun EventListItem(event: SportsEvent, isSelected: Boolean, onClick: () -> Unit) {
     Row(
@@ -304,7 +329,6 @@ private fun EventListItem(event: SportsEvent, isSelected: Boolean, onClick: () -
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Thumbnail / Placeholder
         Box(
             modifier = Modifier
                 .size(120.dp, 68.dp)
