@@ -3,6 +3,7 @@ package com.arenalive.app
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
+import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -44,6 +45,7 @@ import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -261,6 +263,7 @@ fun YouTubeStyleScreen() {
 fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
     val context = LocalContext.current
     var playbackError by remember(stream) { mutableStateOf<String?>(null) }
+    var hasRenderedFrame by remember(stream) { mutableStateOf(false) }
     
     val exoPlayer = remember(stream) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -320,6 +323,11 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
                 onPlaybackError(stream.url)
             }
 
+            override fun onRenderedFirstFrame() {
+                hasRenderedFrame = true
+                playbackError = null
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) playbackError = null
             }
@@ -331,13 +339,20 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
         }
     }
 
+    LaunchedEffect(exoPlayer) {
+        delay(10_000)
+        if (!hasRenderedFrame && exoPlayer.playbackState == Player.STATE_READY) {
+            Log.e("ExoVideoPlayer", "Stream ready without a rendered video frame: ${stream.url}")
+            playbackError = "No video frame rendered"
+            onPlaybackError(stream.url)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).apply {
                     player = exoPlayer
-                    useController = true
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                 }
             },
             update = { it.player = exoPlayer },
