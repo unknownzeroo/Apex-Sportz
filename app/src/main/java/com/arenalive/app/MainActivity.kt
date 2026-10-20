@@ -1,6 +1,5 @@
 package com.arenalive.app
 
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,7 +65,6 @@ class MainActivity : ComponentActivity() {
                     composable("home") { HomeScreen(navController) }
                     composable("detail") { DetailScreen(navController) }
                     composable("player") { PlayerScreen(navController) }
-                    composable("settings") { SettingsScreen(navController) }
                 }
             }
         }
@@ -84,15 +81,14 @@ fun HomeScreen(navController: NavController) {
     var error by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf("All sports") }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     suspend fun refresh() {
         loading = true
         error = null
         try {
-            feed = SportsApi.fetch(context)
+            feed = SportsApi.fetch()
         } catch (e: Exception) {
-            error = "Couldn’t load the schedule. Check your API URL."
+            error = "Couldn’t load the schedule. Check your connection."
         } finally {
             loading = false
         }
@@ -117,13 +113,8 @@ fun HomeScreen(navController: NavController) {
                 Text("APEX SPORTZ", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.2.sp)
                 Text("Live sports, at a glance.", color = Muted, fontSize = 13.sp)
             }
-            Row {
-                IconButton(onClick = { navController.navigate("settings") }) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Ink)
-                }
-                IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Ink)
-                }
+            IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Ink)
             }
         }
 
@@ -153,7 +144,7 @@ fun HomeScreen(navController: NavController) {
         // List of Events
         when {
             loading && currentFeed == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
-            error != null && currentFeed == null -> EmptyState(error!!, "Tap refresh or change API in settings.")
+            error != null && currentFeed == null -> EmptyState(error!!, "Tap refresh to try again.")
             visibleEvents.isEmpty() -> EmptyState("No events found.", "Try another sport or refresh.")
             else -> {
                 LazyColumn(
@@ -207,7 +198,7 @@ fun DetailScreen(navController: NavController) {
                 event.streams.forEach { stream ->
                     Button(
                         onClick = {
-                            EventHolder.currentEvent = event.copy(streams = listOf(stream)) // Pass just the selected stream
+                            EventHolder.currentEvent = event.copy(streams = listOf(stream)) // Pass selected stream
                             navController.navigate("player")
                         },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -241,7 +232,7 @@ fun PlayerScreen(navController: NavController) {
         // 2. Setup Media Item
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
-        // 3. Setup DRM (If keys or license URL exist in the API)
+        // 3. Setup DRM (Parses DRM/Keys from your API)
         if (stream.licenseUrl != null) {
             val drmConfig = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
                 .setLicenseUri(stream.licenseUrl)
@@ -249,7 +240,6 @@ fun PlayerScreen(navController: NavController) {
                 .build()
             mediaItemBuilder.setDrmConfiguration(drmConfig)
         } else if (stream.drmKeys.isNotEmpty()) {
-            // If you use ClearKey (custom DRM keys)
             val keySetId = stream.drmKeys.entries.joinToString("&") { "${it.key}=${it.value}" }
             val drmConfig = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
                 .setKeySetId(keySetId.toByteArray())
@@ -287,48 +277,6 @@ fun PlayerScreen(navController: NavController) {
             modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
         ) {
             Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PAGE 4: SETTINGS SCREEN (CUSTOM API)
-// ---------------------------------------------------------------------------
-@Composable
-fun SettingsScreen(navController: NavController) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("apex_settings", android.content.Context.MODE_PRIVATE) }
-    var apiUrl by remember { mutableStateOf(prefs.getString("api_url", "") ?: "") }
-
-    Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding().padding(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { navController.popBackStack() }) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
-            }
-            Text("Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
-        }
-        
-        Spacer(Modifier.height(24.dp))
-        
-        Text("Custom API Endpoint", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = apiUrl,
-            onValueChange = { apiUrl = it },
-            placeholder = { Text("https://your-api.com/events") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = {
-                prefs.edit().putString("api_url", apiUrl).apply()
-                navController.popBackStack()
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Accent)
-        ) {
-            Text("Save API URL", color = Color.White)
         }
     }
 }
