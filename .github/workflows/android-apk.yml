@@ -3,6 +3,7 @@ name: Apex Sportz Android APK
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -30,11 +31,38 @@ jobs:
         with:
           gradle-version: "8.11.1"
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
-      - name: Upload APK
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_NAME="${GITHUB_REF_NAME#v}"
+          else
+            VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
+          fi
+          gradle --no-daemon assembleDebug -PVERSION_NAME="$VERSION_NAME" -PVERSION_CODE="$GITHUB_RUN_NUMBER"
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: apex-sportz-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download built APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apex-sportz-debug-apk
+          path: release
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Apex Sportz ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release/app-debug.apk

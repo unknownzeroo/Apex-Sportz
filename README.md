@@ -14,9 +14,11 @@ A private on-device cache stores only sanitized event metadata and counts for of
 
 The in-app Media3 player supports clear HTTPS HLS (`.m3u8`), DASH (`.mpd`) and MP4 stream URLs. It uses the URL portion before any pipe-delimited request options. It does not use custom User-Agent/Referer/Cookie headers, DRM schemes, license URLs, decryption keys, or API/token fields. HTTP-only sources, unsupported formats, and streams that require DRM or those custom headers may not play; playback of every feed entry is not guaranteed.
 
-## Build APK
+## APK builds and automatic releases
 
-GitHub Actions workflow `.github/workflows/android-apk.yml` builds a debug APK on pushes and pull requests to `main`, and can also be started manually with **Actions → Apex Sportz Android APK → Run workflow**. Download `apex-sportz-debug-apk` from the completed run's artifacts. It uses Java 17, Android SDK 36 and Gradle 8.11.1.
+The GitHub Actions workflow builds a debug APK on pushes and pull requests to `main`, or when run manually. Download `apex-sportz-debug-apk` from the workflow run's artifacts. To create an automatic GitHub Release with the APK attached, push a version tag such as `v1.0.1`; the workflow builds the APK and publishes release notes and the APK asset. Releases are made only for tags matching `v*`.
+
+Builds use Java 17, Android SDK 36 and Gradle 8.11.1.
 
 ## Local build
 
