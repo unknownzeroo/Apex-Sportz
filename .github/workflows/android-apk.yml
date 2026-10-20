@@ -39,11 +39,34 @@ jobs:
             VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
           fi
           gradle --no-daemon assembleDebug -PVERSION_NAME="$VERSION_NAME" -PVERSION_CODE="$GITHUB_RUN_NUMBER"
-      - name: Upload APK artifact
+      - name: Generate temporary signing key and sign APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/apex-sportz-temporary.jks"
+          STORE_PASS="$(openssl rand -hex 24)"
+          KEY_PASS="$(openssl rand -hex 24)"
+          keytool -genkeypair -noprompt \
+            -keystore "$KEYSTORE" \
+            -storepass "$STORE_PASS" \
+            -keypass "$KEY_PASS" \
+            -alias apex-sportz-temp \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=Apex Sportz Temporary Build, OU=CI, O=Apex Sportz, C=BD"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias apex-sportz-temp \
+            --ks-pass "pass:$STORE_PASS" \
+            --key-pass "pass:$KEY_PASS" \
+            --out app/build/outputs/apk/debug/app-signed.apk \
+            app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-signed.apk
+          rm -f "$KEYSTORE"
+      - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apex-sportz-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: apex-sportz-temporarily-signed-apk
+          path: app/build/outputs/apk/debug/app-signed.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -57,7 +80,7 @@ jobs:
       - name: Download built APK
         uses: actions/download-artifact@v4
         with:
-          name: apex-sportz-debug-apk
+          name: apex-sportz-temporarily-signed-apk
           path: release
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -67,4 +90,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           fail_on_unmatched_files: true
-          files: release/app-debug.apk
+          files: release/app-signed.apk
