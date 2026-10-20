@@ -4,9 +4,11 @@ A minimal native Android live-sports app using the supplied API for event schedu
 
 **Supported OS:** Android 7 (API 24) through Android 16 (API 36). The app compiles and targets API 36 and handles Android edge-to-edge system bars.
 
-## API integration
+## API integration and cache
 
-The app requests `https://events.ivan-flux.online/api/v1/user?username=ATV` over HTTPS. It displays live/upcoming/finished counts, event category and name, participants, status, scheduled time and feed update time. For each event, it reads channel display names and HTTPS media URLs from `channels_data` at runtime; stream URLs are not hard-coded into the repository.
+The app requests `https://events.ivan-flux.online/api/v1/user?username=ATV` over HTTPS. It displays live/upcoming/finished counts, event category and name, participants, status, scheduled time and feed update time. Channel names and HTTPS media URLs are read at runtime from `channels_data`.
+
+A private on-device cache stores only sanitized event metadata and counts for offline schedule viewing. It does not store the raw API response, channel URLs, DRM/license data, or custom headers. If the API is unavailable, the last saved schedule is shown and stream buttons have no cached sources. Video is streamed with the player’s normal temporary buffer; media files are not saved offline.
 
 ## Playback
 

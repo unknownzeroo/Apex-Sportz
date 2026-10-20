@@ -1,5 +1,6 @@
 package com.arenalive.app
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -63,6 +64,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -97,6 +99,7 @@ private data class Feed(
     val liveCount: String,
     val upcomingCount: String,
     val finishedCount: String,
+    val isCached: Boolean = false,
 )
 
 class MainActivity : ComponentActivity() {
@@ -126,12 +129,13 @@ private fun SportsHome() {
     var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
     var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     suspend fun refresh() {
         loading = true
         error = null
         try {
-            feed = withContext(Dispatchers.IO) { SportsApi.fetch() }
+            feed = withContext(Dispatchers.IO) { SportsApi.fetch(context) }
         } catch (_: Exception) {
             error = "Couldn’t load the schedule. Check your connection and try again."
         } finally {
@@ -207,7 +211,7 @@ private fun SportsHome() {
                         item {
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("EVENTS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
-                                Text("Updated ${currentFeed?.updatedAt ?: "—"}", color = Muted, fontSize = 10.sp, maxLines = 1)
+                                Text(if (currentFeed?.isCached == true) "Saved schedule · ${currentFeed.updatedAt}" else "Updated ${currentFeed?.updatedAt ?: "—"}", color = Muted, fontSize = 10.sp, maxLines = 1)
                             }
                         }
                         items(visibleEvents, key = { it.id }) { event ->
@@ -339,8 +343,20 @@ private fun EmptyState(title: String, subtitle: String) {
 
 private object SportsApi {
     private const val ENDPOINT = "https://events.ivan-flux.online/api/v1/user?username=ATV"
+    private const val CACHE_PREFS = "apex_schedule_cache"
+    private const val CACHE_KEY = "safe_event_metadata"
 
-    fun fetch(): Feed {
+    fun fetch(context: Context): Feed {
+        return try {
+            val latest = fetchFromNetwork()
+            runCatching { saveSafeCache(context, latest) }
+            latest
+        } catch (networkError: Exception) {
+            readSafeCache(context) ?: throw networkError
+        }
+    }
+
+    private fun fetchFromNetwork(): Feed {
         val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 12_000
@@ -380,6 +396,69 @@ private object SportsApi {
             )
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun saveSafeCache(context: Context, feed: Feed) {
+        val safeEvents = JSONArray()
+        feed.events.forEach { event ->
+            safeEvents.put(
+                JSONObject()
+                    .put("id", event.id)
+                    .put("name", event.name)
+                    .put("category", event.category)
+                    .put("home", event.home)
+                    .put("away", event.away)
+                    .put("status", event.status)
+                    .put("startTime", event.startTime)
+                    .put("hot", event.hot),
+            )
+        }
+        val safeJson = JSONObject()
+            .put("updatedAt", feed.updatedAt)
+            .put("liveCount", feed.liveCount)
+            .put("upcomingCount", feed.upcomingCount)
+            .put("finishedCount", feed.finishedCount)
+            .put("events", safeEvents)
+        context.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(CACHE_KEY, safeJson.toString())
+            .apply()
+    }
+
+    private fun readSafeCache(context: Context): Feed? {
+        return try {
+            val raw = context.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE).getString(CACHE_KEY, null) ?: return null
+            val root = JSONObject(raw)
+            val savedEvents = root.optJSONArray("events") ?: JSONArray()
+            val events = buildList {
+                for (index in 0 until savedEvents.length()) {
+                    val item = savedEvents.optJSONObject(index) ?: continue
+                    add(
+                        SportsEvent(
+                            id = item.optString("id", index.toString()),
+                            name = item.optString("name", "Sports event"),
+                            category = item.optString("category", "Sport"),
+                            home = item.optString("home", "—"),
+                            away = item.optString("away", "—"),
+                            status = item.optString("status", "Upcoming"),
+                            startTime = item.optString("startTime", ""),
+                            hot = item.optBoolean("hot", false),
+                            streams = emptyList(),
+                        ),
+                    )
+                }
+            }
+            Feed(
+                events = events,
+                updatedAt = root.optString("updatedAt", "—"),
+                liveCount = root.optString("liveCount", "0"),
+                upcomingCount = root.optString("upcomingCount", events.size.toString()),
+                finishedCount = root.optString("finishedCount", "0"),
+                isCached = true,
+            )
+        } catch (_: Exception) {
+            null
         }
     }
 }
