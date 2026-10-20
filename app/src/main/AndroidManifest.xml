@@ -3,10 +3,10 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="ArenaLive"
+        android:label="Apex Sportz"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ArenaLive"
+        android:theme="@style/Theme.ApexSportz"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"

@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.ArenaLive" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.ApexSportz" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#2563EB</item>
         <item name="android:statusBarColor">#F7F8FA</item>

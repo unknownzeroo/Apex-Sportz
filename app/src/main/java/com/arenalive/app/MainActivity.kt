@@ -153,7 +153,7 @@ private fun SportsHome() {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("ARENA", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.2.sp)
+                Text("APEX SPORTZ", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.2.sp)
                 Text("Live sports, at a glance.", color = Muted, fontSize = 13.sp)
             }
             IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
