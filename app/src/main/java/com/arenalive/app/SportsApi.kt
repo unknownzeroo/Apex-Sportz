@@ -12,8 +12,6 @@ data class SportsEvent(
     val category: String,
     val teamA: String,
     val teamB: String,
-    val teamAFlag: String,
-    val teamBFlag: String,
     val status: String,
     val startTime: String,
     val streams: List<StreamOption>,
@@ -63,8 +61,6 @@ object SportsApi {
                             category = item.optString("cat", "Sport"),
                             teamA = info.optString("teamA", "—"),
                             teamB = info.optString("teamB", "—"),
-                            teamAFlag = info.optString("teamAFlag", ""),
-                            teamBFlag = info.optString("teamBFlag", ""),
                             status = info.optString("Status", "Upcoming"),
                             startTime = info.optString("startTime", ""),
                             streams = parseStreamOptions(item),
@@ -93,9 +89,10 @@ object SportsApi {
                 if (rawLink.isBlank() || rawLink == "https://no.link") continue
 
                 val headers = mutableMapOf<String, String>()
-                val drmKey = channel.optString("api").trim().takeIf { it.contains(":") } // Catch ClearKey
+                // Catch ClearKey DRM from the "api" field
+                val drmKey = channel.optString("api").trim().takeIf { it.contains(":") } 
 
-                // Extract headers (e.g., |user-agent=...&referer=...)
+                // Extract headers from the link
                 if (rawLink.contains("|")) {
                     val parts = rawLink.split("|")
                     rawLink = parts[0].trim().removeSuffix("?")
