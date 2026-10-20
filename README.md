@@ -1,28 +1,20 @@
 # ArenaLive
 
-A minimal native Android sports companion for live and upcoming event schedules. The app uses the supplied FluX-oW endpoint for event metadata and shows live/upcoming/finished counts, category, event name, participants, status, start time and feed update time.
+A minimal native Android live-sports app using the supplied API for event schedules and stream choices.
 
-**Supported OS:** Android 7 (API 24) through Android 16 (API 36). The project compiles and targets API 36 and includes edge-to-edge system-bar handling for Android 15/16.
+**Supported OS:** Android 7 (API 24) through Android 16 (API 36). The app compiles and targets API 36 and handles Android edge-to-edge system bars.
 
-## Data source
+## API integration
 
-The app requests `https://events.ivan-flux.online/api/v1/user?username=ATV` over HTTPS. It intentionally parses only the top-level event summary/count fields and each event's `id`, `title`, `cat` and `eventInfo` metadata. It does not access, save, display, or play `channels_data`, stream manifests, request headers, cookies, DRM schemes, or license/key fields found in the source response.
+The app requests `https://events.ivan-flux.online/api/v1/user?username=ATV` over HTTPS. It displays live/upcoming/finished counts, event category and name, participants, status, scheduled time and feed update time. For each event, it reads channel display names and HTTPS media URLs from `channels_data`.
 
-## Official broadcaster links
+## Playback
 
-For events for which you have permission to link, you may add a broadcaster's official HTTPS web or app link in `app/src/main/assets/official_broadcasts.json`. Keys are event IDs from the feed, and values must be regular HTTPS URLs (not stream manifests). Example:
-
-```json
-{
-  "4527": "https://official-broadcaster.example/watch"
-}
-```
-
-The app opens these curated links with Android's standard app/browser chooser. No broadcaster URLs are included by default because the supplied API's channel entries do not establish authorization.
+The in-app Media3 player supports clear HTTPS HLS (`.m3u8`), DASH (`.mpd`) and MP4 stream URLs. It uses the URL portion before any pipe-delimited request options. It does not use custom User-Agent/Referer/Cookie headers, DRM schemes, license URLs, decryption keys, or the API/token fields. HTTP-only sources, unsupported formats, and streams that require DRM or those custom headers may not play; this project does not promise playback of every feed entry.
 
 ## Build APK
 
-GitHub Actions workflow `.github/workflows/android-apk.yml` builds a debug APK on pushes and pull requests to `main`, and can also be started manually with **Actions → Android APK → Run workflow**. Download `arenalive-debug-apk` from the completed run's artifacts. It builds with Java 17, Android SDK 36 and Gradle 8.11.1.
+GitHub Actions workflow `.github/workflows/android-apk.yml` builds a debug APK on pushes and pull requests to `main`, and can also be started manually with **Actions → Android APK → Run workflow**. Download `arenalive-debug-apk` from the completed run's artifacts. It uses Java 17, Android SDK 36 and Gradle 8.11.1.
 
 ## Local build
 

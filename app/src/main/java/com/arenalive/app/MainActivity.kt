@@ -1,6 +1,5 @@
 package com.arenalive.app
 
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -36,13 +35,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,6 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,9 +84,12 @@ private data class SportsEvent(
     val status: String,
     val startTime: String,
     val hot: Boolean,
+    val streams: List<StreamOption>,
 ) {
     val isLive: Boolean get() = status.contains("live", ignoreCase = true) || status.contains("in progress", ignoreCase = true)
 }
+
+private data class StreamOption(val title: String, val url: String)
 
 private data class Feed(
     val events: List<SportsEvent>,
@@ -101,27 +111,20 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Accent, background = Canvas, surface = Color.White)) {
-                SportsHome(onOpenOfficial = { event -> openOfficialBroadcast(event) })
+                SportsHome()
             }
         }
-    }
-
-    private fun openOfficialBroadcast(event: SportsEvent) {
-        val safeUrl = OfficialBroadcasts.urlFor(this, event.id)
-        if (safeUrl == null) {
-            android.widget.Toast.makeText(this, "No official broadcaster link is configured for this event yet.", android.widget.Toast.LENGTH_LONG).show()
-            return
-        }
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)))
     }
 }
 
 @Composable
-private fun SportsHome(onOpenOfficial: (SportsEvent) -> Unit) {
+private fun SportsHome() {
     var feed by remember { mutableStateOf<Feed?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf("All sports") }
+    var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
+    var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
@@ -208,11 +211,17 @@ private fun SportsHome(onOpenOfficial: (SportsEvent) -> Unit) {
                             }
                         }
                         items(visibleEvents, key = { it.id }) { event ->
-                            EventCard(event = event, onWatch = { onOpenOfficial(event) })
+                            EventCard(event = event, onWatch = { selectedEvent = event })
                         }
                     }
                 }
             }
+        }
+        selectedEvent?.let { event ->
+            StreamChooserDialog(event = event, onSelect = { selectedStream = it; selectedEvent = null }, onDismiss = { selectedEvent = null })
+        }
+        selectedStream?.let { stream ->
+            StreamPlayerDialog(stream = stream, onDismiss = { selectedStream = null })
         }
     }
 }
@@ -256,8 +265,60 @@ private fun EventCard(event: SportsEvent, onWatch: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(formatStart(event.startTime), color = Muted, fontSize = 11.sp)
                 TextButton(onClick = onWatch, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                    Text(if (event.isLive) "WATCH" else "BROADCAST INFO", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                    Text("WATCH · ${event.streams.size}", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StreamChooserDialog(event: SportsEvent, onSelect: (StreamOption) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Watch ${event.name}") },
+        text = {
+            if (event.streams.isEmpty()) {
+                Text("No supported HTTPS HLS or DASH stream URLs are available for this event.")
+            } else {
+                Column {
+                    event.streams.forEach { stream ->
+                        TextButton(onClick = { onSelect(stream) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(stream.title, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    Text("Playback uses the URL only; DRM and custom request headers are not applied.", color = Muted, fontSize = 11.sp)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun StreamPlayerDialog(stream: StreamOption, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val exoPlayer = remember(stream.url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(stream.url))
+            prepare()
+            playWhenReady = true
+        }
+    }
+    DisposableEffect(exoPlayer) { onDispose { exoPlayer.release() } }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFF101319)) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stream.title, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    TextButton(onClick = onDismiss) { Text("Close", color = Color.White) }
+                }
+                AndroidView(
+                    factory = { viewContext -> PlayerView(viewContext).apply { player = exoPlayer; useController = true } },
+                    update = { it.player = exoPlayer },
+                    modifier = Modifier.fillMaxWidth().height(230.dp),
+                )
+                Text("Stream URL playback · no DRM keys or custom headers", color = Color.LightGray, fontSize = 10.sp, modifier = Modifier.padding(12.dp))
             }
         }
     }
@@ -305,6 +366,7 @@ private object SportsApi {
                             status = info.optString("Status", "Upcoming"),
                             startTime = info.optString("startTime", ""),
                             hot = info.optString("isHot", "0") == "1",
+                            streams = parseStreamOptions(item),
                         ),
                     )
                 }
@@ -322,15 +384,24 @@ private object SportsApi {
     }
 }
 
-/** Parses only a broadcaster URL explicitly curated by the app maintainer. */
-private object OfficialBroadcasts {
-    fun urlFor(context: android.content.Context, eventId: String): String? = try {
-        val json = context.assets.open("official_broadcasts.json").bufferedReader().use { it.readText() }
-        val raw = JSONObject(json).optString(eventId).takeIf { it.isNotBlank() } ?: return null
-        val uri = Uri.parse(raw)
-        raw.takeIf { uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null }
-    } catch (_: Exception) {
-        null
+/** Uses only the URL portion of each channel; pipe-delimited headers and DRM/key fields are ignored. */
+private fun parseStreamOptions(event: JSONObject): List<StreamOption> {
+    val channels = event.optJSONArray("channels_data") ?: return emptyList()
+    return buildList {
+        for (index in 0 until channels.length()) {
+            val channel = channels.optJSONObject(index) ?: continue
+            val raw = channel.optString("link").substringBefore('|').trim().removeSuffix("?")
+            if (raw.isBlank()) continue
+            val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: continue
+            val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+            val isSupportedMedia = path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
+            val hasSensitiveQuery = uri.queryParameterNames.any { key ->
+                val normalized = key.lowercase(Locale.ROOT)
+                normalized.contains("drm") || normalized.contains("license") || normalized == "key"
+            }
+            if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || !isSupportedMedia || hasSensitiveQuery) continue
+            add(StreamOption(channel.optString("title").ifBlank { "Stream ${index + 1}" }, raw))
+        }
     }
 }
 
