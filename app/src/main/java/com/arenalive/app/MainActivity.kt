@@ -274,10 +274,19 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
     var durationMs by remember(stream) { mutableLongStateOf(C.TIME_UNSET) }
     var showDebug by remember(stream) { mutableStateOf(false) }
     
-    val exoPlayer = remember(stream) {
+    val playbackSetup = remember(stream) {
+        // Some stream hosts reject ExoPlayer's default user agent. Keep a browser-like
+        // default, while letting source-specific headers supplied by the API override it.
+        val requestHeaders = mutableMapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        requestHeaders.putAll(stream.headers)
+
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(stream.headers)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(20_000)
+            .setDefaultRequestProperties(requestHeaders)
 
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
@@ -314,17 +323,17 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
             )
         }
 
-        ExoPlayer.Builder(context)
+        // Do not start network playback here. The listener must be attached first;
+        // otherwise fast failures can happen before onPlayerError is registered.
+        val player = ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
-            .apply {
-                setMediaItem(mediaItemBuilder.build())
-                prepare()
-                playWhenReady = true
-            }
+        player to mediaItemBuilder.build()
     }
+    val exoPlayer = playbackSetup.first
+    val mediaItem = playbackSetup.second
 
-    DisposableEffect(exoPlayer) {
+    DisposableEffect(exoPlayer, mediaItem) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("ExoVideoPlayer", "Playback failed for ${stream.url}", error)
@@ -348,17 +357,37 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
             }
         }
         exoPlayer.addListener(listener)
+        // Register callbacks before prepare/play so startup errors cannot be missed.
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
         onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
 
-    LaunchedEffect(exoPlayer) {
-        delay(10_000)
-        if (!hasRenderedFrame && exoPlayer.playbackState == Player.STATE_READY) {
-            Log.e("ExoVideoPlayer", "Stream ready without a rendered video frame: ${stream.url}")
-            playbackError = "No video frame rendered"
+    LaunchedEffect(exoPlayer, playbackState, hasRenderedFrame) {
+        if (
+            hasRenderedFrame ||
+            (playbackState != Player.STATE_BUFFERING && playbackState != Player.STATE_READY)
+        ) {
+            return@LaunchedEffect
+        }
+
+        val stateAtStart = playbackState
+        // A live stream that never leaves BUFFERING is just as broken as a READY
+        // stream that never renders a frame. Time out both and try the next source.
+        delay(if (stateAtStart == Player.STATE_BUFFERING) 20_000L else 10_000L)
+
+        if (!hasRenderedFrame && exoPlayer.playbackState == stateAtStart) {
+            val reason = if (stateAtStart == Player.STATE_BUFFERING) {
+                "Stream timed out while buffering"
+            } else {
+                "No video frame rendered"
+            }
+            Log.e("ExoVideoPlayer", "$reason: ${stream.url}")
+            playbackError = reason
             onPlaybackError(stream.url)
         }
     }
@@ -443,7 +472,7 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
                     Button(onClick = {
                         playbackError = null
                         hasRenderedFrame = false
-                        exoPlayer.seekTo(0)
+                        exoPlayer.seekToDefaultPosition()
                         exoPlayer.prepare()
                         exoPlayer.playWhenReady = true
                     }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)) {
