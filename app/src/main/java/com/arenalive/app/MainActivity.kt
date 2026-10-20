@@ -15,7 +15,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -264,6 +268,11 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
     val context = LocalContext.current
     var playbackError by remember(stream) { mutableStateOf<String?>(null) }
     var hasRenderedFrame by remember(stream) { mutableStateOf(false) }
+    var playbackState by remember(stream) { mutableIntStateOf(Player.STATE_IDLE) }
+    var isPlaying by remember(stream) { mutableStateOf(false) }
+    var positionMs by remember(stream) { mutableLongStateOf(0L) }
+    var durationMs by remember(stream) { mutableLongStateOf(C.TIME_UNSET) }
+    var showDebug by remember(stream) { mutableStateOf(false) }
     
     val exoPlayer = remember(stream) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -320,6 +329,7 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("ExoVideoPlayer", "Playback failed for ${stream.url}", error)
                 playbackError = error.errorCodeName ?: "Unable to play this stream"
+                playbackState = Player.STATE_IDLE
                 onPlaybackError(stream.url)
             }
 
@@ -328,8 +338,13 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
                 playbackError = null
             }
 
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) playbackError = null
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+                if (state == Player.STATE_READY) playbackError = null
+            }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
             }
         }
         exoPlayer.addListener(listener)
@@ -348,6 +363,14 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
         }
     }
 
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            durationMs = exoPlayer.duration
+            delay(500)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             factory = { ctx ->
@@ -359,35 +382,96 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
             modifier = Modifier.fillMaxSize()
         )
 
-        if (playbackError != null) {
-            Column(
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xCC000000))
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxWidth()
+                    .background(Color(0xCC101010))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "This stream could not be played",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Try another stream or retry this one.",
-                    color = Color.LightGray,
-                    textAlign = TextAlign.Center,
-                    fontSize = 12.sp
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(onClick = {
-                    playbackError = null
-                    exoPlayer.prepare()
-                    exoPlayer.playWhenReady = true
-                }) {
-                    Text("Retry")
+                Text("APEX LIVE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(4.dp), color = playerStatusColor(playbackState, hasRenderedFrame, playbackError)) {
+                    Text(
+                        playerStatusLabel(playbackState, hasRenderedFrame, playbackError),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = { showDebug = !showDebug }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        if (showDebug) Icons.Default.Close else Icons.Default.BugReport,
+                        contentDescription = "Toggle playback diagnostics",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            if (showDebug) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    color = Color(0xEE111111),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text("PLAYBACK DIAGNOSTICS", color = Color(0xFF93C5FD), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Stream: ${stream.title}", color = Color.White, fontSize = 11.sp)
+                        Text("State: ${playerStateName(playbackState)}  |  Playing: $isPlaying", color = Color.LightGray, fontSize = 10.sp)
+                        Text("First frame: $hasRenderedFrame  |  Position: ${positionMs / 1000}s", color = Color.LightGray, fontSize = 10.sp)
+                        Text("DRM: ${if (stream.drmKey.isNullOrBlank()) "none" else "ClearKey metadata"}", color = Color.LightGray, fontSize = 10.sp)
+                        Text("URL: ${stream.url}", color = Color.LightGray, fontSize = 9.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        if (stream.headers.isNotEmpty()) Text("Headers: ${stream.headers.keys.joinToString()}", color = Color.LightGray, fontSize = 9.sp)
+                        if (playbackError != null) Text("Error: $playbackError", color = Color(0xFFFCA5A5), fontSize = 10.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            if (playbackError != null) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(Color(0xCC000000)).padding(horizontal = 18.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Playback failed — trying the next stream", color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center)
+                    Text(playbackError!!, color = Color(0xFFFCA5A5), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(onClick = {
+                        playbackError = null
+                        hasRenderedFrame = false
+                        exoPlayer.seekTo(0)
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)) {
+                        Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Retry stream")
+                    }
+                }
+            } else {
+                if (durationMs != C.TIME_UNSET && durationMs > 0) {
+                    Slider(
+                        value = positionMs.coerceIn(0L, durationMs).toFloat(),
+                        onValueChange = { exoPlayer.seekTo(it.toLong()) },
+                        valueRange = 0f..durationMs.toFloat(),
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(Color(0xCC101010)).padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                    }) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "Play or pause", tint = Color.White)
+                    }
+                    Text(stream.title, color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(playerStateName(playbackState), color = Color.LightGray, fontSize = 10.sp)
                 }
             }
         }
@@ -397,6 +481,29 @@ fun ExoVideoPlayer(stream: StreamOption, onPlaybackError: (String) -> Unit) {
 // ---------------------------------------------------------------------------
 // UTILS & UI COMPONENTS
 // ---------------------------------------------------------------------------
+private fun playerStateName(state: Int): String = when (state) {
+    Player.STATE_IDLE -> "IDLE"
+    Player.STATE_BUFFERING -> "BUFFERING"
+    Player.STATE_READY -> "READY"
+    Player.STATE_ENDED -> "ENDED"
+    else -> "UNKNOWN"
+}
+
+private fun playerStatusLabel(state: Int, hasFrame: Boolean, error: String?): String = when {
+    error != null -> "ERROR"
+    hasFrame && state == Player.STATE_READY -> "PLAYING"
+    state == Player.STATE_BUFFERING -> "BUFFERING"
+    state == Player.STATE_READY -> "READY / NO FRAME"
+    else -> playerStateName(state)
+}
+
+private fun playerStatusColor(state: Int, hasFrame: Boolean, error: String?): Color = when {
+    error != null -> Color(0xFFB91C1C)
+    hasFrame && state == Player.STATE_READY -> Color(0xFF15803D)
+    state == Player.STATE_BUFFERING -> Color(0xFFB45309)
+    else -> Color(0xFF4B5563)
+}
+
 private fun hexToBase64Url(hex: String): String {
     require(hex.length == 32 && hex.all { it in "0123456789abcdefABCDEF" }) {
         "ClearKey values must be 16-byte hexadecimal strings"

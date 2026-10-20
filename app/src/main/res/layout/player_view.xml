@@ -6,5 +6,5 @@
     android:layout_height="match_parent"
     android:background="#000000"
     app:surface_type="texture_view"
-    app:use_controller="true"
+    app:use_controller="false"
     app:show_buffering="always" />
