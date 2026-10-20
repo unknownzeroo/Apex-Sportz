@@ -91,7 +91,7 @@ fun YouTubeStyleScreen() {
                 val firstLive = feed?.events?.firstOrNull { it.isLive } ?: feed?.events?.firstOrNull()
                 if (firstLive != null && firstLive.streams.isNotEmpty()) {
                     selectedEvent = firstLive
-                    selectedStream = firstLive.streams.first()
+                    selectedStream = preferredStream(firstLive.streams)
                 }
             }
         } catch (e: Exception) {
@@ -231,7 +231,7 @@ fun YouTubeStyleScreen() {
             items(feed?.events ?: emptyList(), key = { it.id }) { event ->
                 EventListItem(event = event, isSelected = event.id == selectedEvent?.id) {
                     selectedEvent = event
-                    selectedStream = event.streams.firstOrNull()
+                    selectedStream = preferredStream(event.streams)
                 }
             }
         }
@@ -375,6 +375,17 @@ private fun hexToBase64Url(hex: String): String {
     }
     return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 }
+
+private fun preferredStream(streams: List<StreamOption>): StreamOption? {
+    // The feed commonly puts encrypted DASH first. Start with HLS so the app
+    // has a playable default on devices without the required DRM scheme.
+    return streams.firstOrNull { it.drmKey.isNullOrBlank() && isHls(it.url) }
+        ?: streams.firstOrNull { it.drmKey.isNullOrBlank() }
+        ?: streams.firstOrNull()
+}
+
+private fun isHls(url: String): Boolean =
+    url.substringBefore('|').substringBefore('?').endsWith(".m3u8", ignoreCase = true)
 
 @Composable
 private fun EventListItem(event: SportsEvent, isSelected: Boolean, onClick: () -> Unit) {
