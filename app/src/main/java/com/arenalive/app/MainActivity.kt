@@ -1,106 +1,54 @@
 package com.arenalive.app
 
-import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.Dispatchers
+import androidx.navigation.NavController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import org.json.JSONArray
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// Theme Colors
 private val Ink = Color(0xFF151923)
 private val Muted = Color(0xFF727988)
 private val Accent = Color(0xFF2563EB)
 private val Canvas = Color(0xFFF7F8FA)
 private val Line = Color(0xFFE8EAF0)
-
-private data class SportsEvent(
-    val id: String,
-    val name: String,
-    val category: String,
-    val home: String,
-    val away: String,
-    val status: String,
-    val startTime: String,
-    val hot: Boolean,
-    val streams: List<StreamOption>,
-) {
-    val isLive: Boolean get() = status.contains("live", ignoreCase = true) || status.contains("in progress", ignoreCase = true)
-}
-
-private data class StreamOption(val title: String, val url: String)
-
-private data class Feed(
-    val events: List<SportsEvent>,
-    val updatedAt: String,
-    val liveCount: String,
-    val upcomingCount: String,
-    val finishedCount: String,
-    val isCached: Boolean = false,
-)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,20 +62,27 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Accent, background = Canvas, surface = Color.White)) {
-                SportsHome()
+                val navController = rememberNavController()
+                NavHost(navController = navController, startDestination = "home") {
+                    composable("home") { HomeScreen(navController) }
+                    composable("detail") { DetailScreen(navController) }
+                    composable("player") { PlayerScreen(navController) }
+                    composable("settings") { SettingsScreen(navController) }
+                }
             }
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// PAGE 1: HOME SCREEN
+// ---------------------------------------------------------------------------
 @Composable
-private fun SportsHome() {
+fun HomeScreen(navController: NavController) {
     var feed by remember { mutableStateOf<Feed?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf("All sports") }
-    var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
-    var selectedStream by remember { mutableStateOf<StreamOption?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -135,15 +90,16 @@ private fun SportsHome() {
         loading = true
         error = null
         try {
-            feed = withContext(Dispatchers.IO) { SportsApi.fetch(context) }
-        } catch (_: Exception) {
-            error = "Couldn’t load the schedule. Check your connection and try again."
+            feed = SportsApi.fetch(context)
+        } catch (e: Exception) {
+            error = "Couldn’t load the schedule. Check your API URL."
         } finally {
             loading = false
         }
     }
 
     LaunchedEffect(Unit) { refresh() }
+    
     val currentFeed = feed
     val categories = listOf("All sports") + (currentFeed?.events.orEmpty().map { it.category }.filter { it.isNotBlank() }.distinct().sorted())
     val visibleEvents = currentFeed?.events.orEmpty().filter {
@@ -151,8 +107,9 @@ private fun SportsHome() {
     }
 
     Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding()) {
+        // Top Bar
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -160,90 +117,225 @@ private fun SportsHome() {
                 Text("APEX SPORTZ", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.2.sp)
                 Text("Live sports, at a glance.", color = Muted, fontSize = 13.sp)
             }
-            IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh events", tint = Ink)
+            Row {
+                IconButton(onClick = { navController.navigate("settings") }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Ink)
+                }
+                IconButton(onClick = { scope.launch { refresh() } }, enabled = !loading) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Ink)
+                }
             }
         }
 
-        Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SummaryPill("${currentFeed?.liveCount ?: "—"} live", isLive = true)
-                SummaryPill("${currentFeed?.upcomingCount ?: "—"} upcoming")
-                SummaryPill("${currentFeed?.finishedCount ?: "—"} finished")
+        // Filters
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            categories.take(4).forEach { category ->
+                val active = selectedCategory == category
+                Surface(
+                    modifier = Modifier.clickable { selectedCategory = category },
+                    shape = RoundedCornerShape(18.dp),
+                    color = if (active) Ink else Color.White,
+                ) {
+                    Text(
+                        category,
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+                        color = if (active) Color.White else Muted,
+                        fontSize = 12.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                }
             }
+        }
 
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                categories.forEach { category ->
-                    val active = selectedCategory == category
-                    Surface(
-                        modifier = Modifier.clickable { selectedCategory = category },
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (active) Ink else Color.White,
-                    ) {
-                        Text(
-                            category,
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                            color = if (active) Color.White else Muted,
-                            fontSize = 12.sp,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                            maxLines = 1,
-                        )
+        Spacer(Modifier.height(12.dp))
+        
+        // List of Events
+        when {
+            loading && currentFeed == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
+            error != null && currentFeed == null -> EmptyState(error!!, "Tap refresh or change API in settings.")
+            visibleEvents.isEmpty() -> EmptyState("No events found.", "Try another sport or refresh.")
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
+                    items(visibleEvents, key = { it.id }) { event ->
+                        EventCard(event = event, onWatch = {
+                            EventHolder.currentEvent = event
+                            navController.navigate("detail")
+                        })
                     }
                 }
             }
-
-            Spacer(Modifier.height(12.dp))
-            when {
-                loading && currentFeed == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Accent)
-                }
-                error != null && currentFeed == null -> EmptyState(error!!, "Tap refresh to try again.")
-                visibleEvents.isEmpty() -> EmptyState("No events found.", "Try another sport or refresh the schedule.")
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(11.dp),
-                    ) {
-                        item {
-                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("EVENTS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
-                                Text(if (currentFeed?.isCached == true) "Saved schedule · ${currentFeed.updatedAt}" else "Updated ${currentFeed?.updatedAt ?: "—"}", color = Muted, fontSize = 10.sp, maxLines = 1)
-                            }
-                        }
-                        items(visibleEvents, key = { it.id }) { event ->
-                            EventCard(event = event, onWatch = { selectedEvent = event })
-                        }
-                    }
-                }
-            }
-        }
-        selectedEvent?.let { event ->
-            StreamChooserDialog(event = event, onSelect = { selectedStream = it; selectedEvent = null }, onDismiss = { selectedEvent = null })
-        }
-        selectedStream?.let { stream ->
-            StreamPlayerDialog(stream = stream, onDismiss = { selectedStream = null })
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// PAGE 2: EVENT DETAILS SCREEN
+// ---------------------------------------------------------------------------
 @Composable
-private fun SummaryPill(text: String, isLive: Boolean = false) {
-    Surface(shape = RoundedCornerShape(18.dp), color = Color.White) {
-        Row(
-            Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (isLive) Box(Modifier.size(7.dp).background(Color(0xFFE34242), CircleShape))
-            Text(text, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+fun DetailScreen(navController: NavController) {
+    val event = EventHolder.currentEvent
+    if (event == null) {
+        navController.popBackStack()
+        return
+    }
+
+    Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { navController.popBackStack() }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
+            }
+            Text("Event Details", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+        }
+
+        Column(Modifier.padding(20.dp)) {
+            Text(event.name, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Spacer(Modifier.height(8.dp))
+            Text("${event.home} vs ${event.away}", fontSize = 18.sp, color = Muted)
+            Spacer(Modifier.height(24.dp))
+            
+            Text("Available Streams", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Spacer(Modifier.height(12.dp))
+
+            if (event.streams.isEmpty()) {
+                Text("No streams available for this event.", color = Muted)
+            } else {
+                event.streams.forEach { stream ->
+                    Button(
+                        onClick = {
+                            EventHolder.currentEvent = event.copy(streams = listOf(stream)) // Pass just the selected stream
+                            navController.navigate("player")
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                    ) {
+                        Text(stream.title, color = Color.White)
+                    }
+                }
+            }
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// PAGE 3: PLAYER SCREEN (WITH HEADERS & DRM)
+// ---------------------------------------------------------------------------
+@Composable
+fun PlayerScreen(navController: NavController) {
+    val stream = EventHolder.currentEvent?.streams?.firstOrNull()
+    if (stream == null) {
+        navController.popBackStack()
+        return
+    }
+
+    val context = LocalContext.current
+    val exoPlayer = remember(stream.url) {
+        // 1. Setup Custom Headers
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(stream.headers)
+
+        // 2. Setup Media Item
+        val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
+
+        // 3. Setup DRM (If keys or license URL exist in the API)
+        if (stream.licenseUrl != null) {
+            val drmConfig = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
+                .setLicenseUri(stream.licenseUrl)
+                .setKeyRequestProperties(stream.headers)
+                .build()
+            mediaItemBuilder.setDrmConfiguration(drmConfig)
+        } else if (stream.drmKeys.isNotEmpty()) {
+            // If you use ClearKey (custom DRM keys)
+            val keySetId = stream.drmKeys.entries.joinToString("&") { "${it.key}=${it.value}" }
+            val drmConfig = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
+                .setKeySetId(keySetId.toByteArray())
+                .build()
+            mediaItemBuilder.setDrmConfiguration(drmConfig)
+        }
+
+        // 4. Build ExoPlayer
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .build()
+            .apply {
+                setMediaItem(mediaItemBuilder.build())
+                prepare()
+                playWhenReady = true
+            }
+    }
+
+    DisposableEffect(exoPlayer) {
+        onDispose { exoPlayer.release() }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = true
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        IconButton(
+            onClick = { navController.popBackStack() },
+            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+        ) {
+            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PAGE 4: SETTINGS SCREEN (CUSTOM API)
+// ---------------------------------------------------------------------------
+@Composable
+fun SettingsScreen(navController: NavController) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("apex_settings", android.content.Context.MODE_PRIVATE) }
+    var apiUrl by remember { mutableStateOf(prefs.getString("api_url", "") ?: "") }
+
+    Column(Modifier.fillMaxSize().background(Canvas).systemBarsPadding().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { navController.popBackStack() }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Ink)
+            }
+            Text("Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        }
+        
+        Spacer(Modifier.height(24.dp))
+        
+        Text("Custom API Endpoint", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = apiUrl,
+            onValueChange = { apiUrl = it },
+            placeholder = { Text("https://your-api.com/events") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                prefs.edit().putString("api_url", apiUrl).apply()
+                navController.popBackStack()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent)
+        ) {
+            Text("Save API URL", color = Color.White)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SHARED COMPONENTS
+// ---------------------------------------------------------------------------
 @Composable
 private fun EventCard(event: SportsEvent, onWatch: () -> Unit) {
     Surface(shape = RoundedCornerShape(17.dp), color = Color.White, shadowElevation = 1.dp) {
@@ -268,61 +360,9 @@ private fun EventCard(event: SportsEvent, onWatch: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(formatStart(event.startTime), color = Muted, fontSize = 11.sp)
-                TextButton(onClick = onWatch, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                    Text("WATCH · ${event.streams.size}", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                TextButton(onClick = onWatch) {
+                    Text("WATCH · ${event.streams.size}", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StreamChooserDialog(event: SportsEvent, onSelect: (StreamOption) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Watch ${event.name}") },
-        text = {
-            if (event.streams.isEmpty()) {
-                Text("No supported HTTPS HLS or DASH stream URLs are available for this event.")
-            } else {
-                Column {
-                    event.streams.forEach { stream ->
-                        TextButton(onClick = { onSelect(stream) }, modifier = Modifier.fillMaxWidth()) {
-                            Text(stream.title, modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                    Text("Playback uses the URL only; DRM and custom request headers are not applied.", color = Muted, fontSize = 11.sp)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
-}
-
-@Composable
-private fun StreamPlayerDialog(stream: StreamOption, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val exoPlayer = remember(stream.url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(stream.url))
-            prepare()
-            playWhenReady = true
-        }
-    }
-    DisposableEffect(exoPlayer) { onDispose { exoPlayer.release() } }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFF101319)) {
-            Column {
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stream.title, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TextButton(onClick = onDismiss) { Text("Close", color = Color.White) }
-                }
-                AndroidView(
-                    factory = { viewContext -> PlayerView(viewContext).apply { player = exoPlayer; useController = true } },
-                    update = { it.player = exoPlayer },
-                    modifier = Modifier.fillMaxWidth().height(230.dp),
-                )
-                Text("Stream URL playback · no DRM keys or custom headers", color = Color.LightGray, fontSize = 10.sp, modifier = Modifier.padding(12.dp))
             }
         }
     }
@@ -330,162 +370,15 @@ private fun StreamPlayerDialog(stream: StreamOption, onDismiss: () -> Unit) {
 
 @Composable
 private fun EmptyState(title: String, subtitle: String) {
-    Column(
-        Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
+    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(title, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         Text(subtitle, color = Muted, fontSize = 13.sp)
     }
 }
 
-private object SportsApi {
-    private const val ENDPOINT = "https://events.ivan-flux.online/api/v1/user?username=ATV"
-    private const val CACHE_PREFS = "apex_schedule_cache"
-    private const val CACHE_KEY = "safe_event_metadata"
-
-    fun fetch(context: Context): Feed {
-        return try {
-            val latest = fetchFromNetwork()
-            runCatching { saveSafeCache(context, latest) }
-            latest
-        } catch (networkError: Exception) {
-            readSafeCache(context) ?: throw networkError
-        }
-    }
-
-    private fun fetchFromNetwork(): Feed {
-        val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 12_000
-            readTimeout = 15_000
-            setRequestProperty("Accept", "application/json")
-        }
-        try {
-            if (connection.responseCode !in 200..299) error("API returned ${connection.responseCode}")
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            val items = root.optJSONArray("events")
-            val events = buildList {
-                if (items != null) for (index in 0 until items.length()) {
-                    val item = items.optJSONObject(index) ?: continue
-                    val info = item.optJSONObject("eventInfo") ?: JSONObject()
-                    add(
-                        SportsEvent(
-                            id = item.optString("id", index.toString()),
-                            name = info.optString("eventName").ifBlank { item.optString("title", "Sports event") },
-                            category = item.optString("cat", "Sport"),
-                            home = info.optString("teamA", "—"),
-                            away = info.optString("teamB", "—"),
-                            status = info.optString("Status", "Upcoming"),
-                            startTime = info.optString("startTime", ""),
-                            hot = info.optString("isHot", "0") == "1",
-                            streams = parseStreamOptions(item),
-                        ),
-                    )
-                }
-            }.sortedWith(compareByDescending<SportsEvent> { it.isLive }.thenBy { it.startTime })
-            return Feed(
-                events = events,
-                updatedAt = root.optString("Last update time", "—"),
-                liveCount = root.optString("Live", "0"),
-                upcomingCount = root.optString("Upcoming", events.size.toString()),
-                finishedCount = root.optString("Finish", "0"),
-            )
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun saveSafeCache(context: Context, feed: Feed) {
-        val safeEvents = JSONArray()
-        feed.events.forEach { event ->
-            safeEvents.put(
-                JSONObject()
-                    .put("id", event.id)
-                    .put("name", event.name)
-                    .put("category", event.category)
-                    .put("home", event.home)
-                    .put("away", event.away)
-                    .put("status", event.status)
-                    .put("startTime", event.startTime)
-                    .put("hot", event.hot),
-            )
-        }
-        val safeJson = JSONObject()
-            .put("updatedAt", feed.updatedAt)
-            .put("liveCount", feed.liveCount)
-            .put("upcomingCount", feed.upcomingCount)
-            .put("finishedCount", feed.finishedCount)
-            .put("events", safeEvents)
-        context.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(CACHE_KEY, safeJson.toString())
-            .apply()
-    }
-
-    private fun readSafeCache(context: Context): Feed? {
-        return try {
-            val raw = context.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE).getString(CACHE_KEY, null) ?: return null
-            val root = JSONObject(raw)
-            val savedEvents = root.optJSONArray("events") ?: JSONArray()
-            val events = buildList {
-                for (index in 0 until savedEvents.length()) {
-                    val item = savedEvents.optJSONObject(index) ?: continue
-                    add(
-                        SportsEvent(
-                            id = item.optString("id", index.toString()),
-                            name = item.optString("name", "Sports event"),
-                            category = item.optString("category", "Sport"),
-                            home = item.optString("home", "—"),
-                            away = item.optString("away", "—"),
-                            status = item.optString("status", "Upcoming"),
-                            startTime = item.optString("startTime", ""),
-                            hot = item.optBoolean("hot", false),
-                            streams = emptyList(),
-                        ),
-                    )
-                }
-            }
-            Feed(
-                events = events,
-                updatedAt = root.optString("updatedAt", "—"),
-                liveCount = root.optString("liveCount", "0"),
-                upcomingCount = root.optString("upcomingCount", events.size.toString()),
-                finishedCount = root.optString("finishedCount", "0"),
-                isCached = true,
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-}
-
-/** Uses only the URL portion of each channel; pipe-delimited headers and DRM/key fields are ignored. */
-private fun parseStreamOptions(event: JSONObject): List<StreamOption> {
-    val channels = event.optJSONArray("channels_data") ?: return emptyList()
-    return buildList {
-        for (index in 0 until channels.length()) {
-            val channel = channels.optJSONObject(index) ?: continue
-            val raw = channel.optString("link").substringBefore('|').trim().removeSuffix("?")
-            if (raw.isBlank()) continue
-            val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: continue
-            val path = uri.path.orEmpty().lowercase(Locale.ROOT)
-            val isSupportedMedia = path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
-            val hasSensitiveQuery = uri.queryParameterNames.any { key ->
-                val normalized = key.lowercase(Locale.ROOT)
-                normalized.contains("drm") || normalized.contains("license") || normalized == "key"
-            }
-            if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || !isSupportedMedia || hasSensitiveQuery) continue
-            add(StreamOption(channel.optString("title").ifBlank { "Stream ${index + 1}" }, raw))
-        }
-    }
-}
-
 private fun formatStart(raw: String): String {
-    if (raw.isBlank()) return "Time to be announced"
+    if (raw.isBlank()) return "TBA"
     return try {
         val input = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US).parse(raw) ?: return raw
         SimpleDateFormat("EEE, d MMM · h:mm a", Locale.getDefault()).format(Date(input.time))
