@@ -2,6 +2,7 @@ package com.arenalive.app
 
 import android.os.Bundle
 import android.util.Base64
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -32,6 +33,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
@@ -241,9 +244,11 @@ fun YouTubeStyleScreen() {
 @Composable
 fun ExoVideoPlayer(stream: StreamOption) {
     val context = LocalContext.current
+    var playbackError by remember(stream) { mutableStateOf<String?>(null) }
     
     val exoPlayer = remember(stream) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(stream.headers)
 
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
@@ -292,26 +297,78 @@ fun ExoVideoPlayer(stream: StreamOption) {
     }
 
     DisposableEffect(exoPlayer) {
-        onDispose { exoPlayer.release() }
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e("ExoVideoPlayer", "Playback failed for ${stream.url}", error)
+                playbackError = error.errorCodeName ?: "Unable to play this stream"
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) playbackError = null
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
     }
 
-    AndroidView(
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                player = exoPlayer
-                useController = true
-                setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = true
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+                }
+            },
+            update = { it.player = exoPlayer },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (playbackError != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xCC000000))
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "This stream could not be played",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Try another stream or retry this one.",
+                    color = Color.LightGray,
+                    textAlign = TextAlign.Center,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(onClick = {
+                    playbackError = null
+                    exoPlayer.prepare()
+                    exoPlayer.playWhenReady = true
+                }) {
+                    Text("Retry")
+                }
             }
-        },
-        update = { it.player = exoPlayer },
-        modifier = Modifier.fillMaxSize()
-    )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // UTILS & UI COMPONENTS
 // ---------------------------------------------------------------------------
 private fun hexToBase64Url(hex: String): String {
+    require(hex.length == 32 && hex.all { it in "0123456789abcdefABCDEF" }) {
+        "ClearKey values must be 16-byte hexadecimal strings"
+    }
     val bytes = ByteArray(hex.length / 2)
     for (i in bytes.indices) {
         bytes[i] = ((Character.digit(hex[i * 2], 16) shl 4) + Character.digit(hex[i * 2 + 1], 16)).toByte()

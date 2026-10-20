@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 data class SportsEvent(
     val id: String,
@@ -98,9 +99,10 @@ object SportsApi {
                 if (rawLink.isBlank() || rawLink == "https://no.link") continue
 
                 val headers = mutableMapOf<String, String>()
-                
-                // Catch ClearKey DRM from the "api" field (Format: KID:KEY in Hex)
-                val drmKey = channel.optString("api").trim().takeIf { it.contains(":") } 
+
+                // ClearKey may be supplied in the API field or alongside the URL as
+                // drmLicense=KID:KEY. Keep it out of HTTP headers; it is player metadata.
+                var drmKey = channel.optString("api").trim().takeIf { isClearKey(it) }
 
                 // Extract headers (e.g. |user-agent=...&referer=...)
                 if (rawLink.contains("|")) {
@@ -109,8 +111,14 @@ object SportsApi {
                     
                     parts.drop(1).joinToString("&").split("&").forEach { header ->
                         if (header.contains("=")) {
-                            val (key, value) = header.split("=", limit = 2)
-                            headers[key.trim()] = value.trim()
+                            val (rawKey, value) = header.split("=", limit = 2)
+                            val key = rawKey.trim()
+                            val trimmedValue = value.trim()
+                            when (key.lowercase(Locale.US)) {
+                                "drmlicense" -> if (isClearKey(trimmedValue)) drmKey = trimmedValue
+                                "drmscheme" -> Unit
+                                else -> headers[canonicalHeaderName(key)] = trimmedValue
+                            }
                         }
                     }
                 }
@@ -125,5 +133,18 @@ object SportsApi {
                 )
             }
         }
+    }
+
+    private fun isClearKey(value: String): Boolean {
+        val parts = value.split(":")
+        return parts.size == 2 && parts.all { it.matches(Regex("[0-9a-fA-F]{32}")) }
+    }
+
+    private fun canonicalHeaderName(name: String): String = when (name.lowercase(Locale.US)) {
+        "user-agent" -> "User-Agent"
+        "referer" -> "Referer"
+        "origin" -> "Origin"
+        "cookie" -> "Cookie"
+        else -> name
     }
 }
