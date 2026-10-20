@@ -225,21 +225,23 @@ fun PlayerScreen(navController: NavController) {
 
     val context = LocalContext.current
     val exoPlayer = remember(stream.url) {
-        // 1. Setup Custom Headers
+        // 1. Setup Custom Headers for media segments
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(stream.headers)
 
         // 2. Setup Media Item
         val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
 
-        // 3. Setup DRM (Parses DRM/Keys from your API)
+        // 3. Setup DRM (If keys or license URL exist in the API)
         if (stream.licenseUrl != null) {
             val drmConfig = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
                 .setLicenseUri(stream.licenseUrl)
-                .setKeyRequestProperties(stream.headers)
+                // FIX: Use setLicenseRequestHeaders instead of setKeyRequestProperties
+                .setLicenseRequestHeaders(stream.headers) 
                 .build()
             mediaItemBuilder.setDrmConfiguration(drmConfig)
         } else if (stream.drmKeys.isNotEmpty()) {
+            // If you use ClearKey (custom DRM keys)
             val keySetId = stream.drmKeys.entries.joinToString("&") { "${it.key}=${it.value}" }
             val drmConfig = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
                 .setKeySetId(keySetId.toByteArray())
